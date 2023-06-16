@@ -85,6 +85,10 @@ dataList= list(
   y=deltaZp,
   Ntotal= length(deltaZp)
 )
+dataList2= list(
+  y= Y_out$Zp,
+  Ntotal= Ntotal
+)
 
 #prepare model
 modelString= "
@@ -98,6 +102,18 @@ modelString= "
 "
 #writeLines(modelString, con="TEMPmodel.txt")
 
+#prepare model
+modelString2= "
+ model {
+  for (i in 2:Ntotal) {
+    y[i] ~ dnorm(z[i], 1/sigma^2)  #likelihood
+    z[i]= y[i-1]+ k1dt
+  } 
+  k1dt ~ dnorm(0, 1/0.05^2) #prior
+  sigma ~ dgamma(1,2)  #mean: a/b; sd= sqrt(a)/b
+ }
+"
+
 
 initList= function()  { #initial values generated via function: mu centered around 0; sigma in range 0-0.1
   set.seed(123)
@@ -106,7 +122,7 @@ initList= function()  { #initial values generated via function: mu centered arou
   return( list( k1dt= initMu, sigma=initSigma))
 }
 
-jagsModel= jags.model( file= textConnection(modelString), data=dataList, inits=initList,
+jagsModel= jags.model( file= textConnection(modelString2), data=dataList2, inits=initList,
                        n.chains=3, n.adapt=500)  #find MCMC sampler
 #update( jagsModel,n.iter=500)  #burn in
 
