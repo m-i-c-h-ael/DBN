@@ -3,18 +3,19 @@ cat("\014")  #is the code to send ctrl+L to the console and therefore will clear
 plot.new()
 
 # to add
- #dephosphorylation
- #estimation of SD
- #replicates
- #no negative concentration
- #relative phosphorylation -> max=1
- #JAGS
- #noise
+#dephosphorylation
+#estimation of SD
+#replicates
+#no negative concentration
+#relative phosphorylation -> max=1
+#JAGS
+#noise
 
 library('deSolve')
 library('animation')
 library('rjags')
 source('H:/My Drive/learning/20230220_BayesianStatistics/20230504_BayesianDogsBook/DBDA2Eprograms/DBDA2E-utilities.R')
+
 
 # True:
  #A is phosphorylated by X, which is present in constant concentration
@@ -78,6 +79,7 @@ lines(Y_out$t,Y_out$Wp,col='blue',lty=2)
 #prepare data
 deltaZp= diff(Y_out$Zp)
 deltat= diff(Y_out$t)
+
 Ntotal= length(deltaZp)
 dataList= list(
   y=deltaZp,
@@ -87,25 +89,26 @@ dataList= list(
 #prepare model
 modelString= "
  model {
-  for (i in Ntotal) {
-    y[i] ~ dnorm(k1dt, sigma)  #likelihood
+  for (i in 1:Ntotal) {
+    y[i] ~ dnorm(k1dt, 1/sigma^2)  #likelihood
   } 
-  k1dt ~ dnorm(0,0.05) #prior
+  k1dt ~ dnorm(0, 1/0.05^2) #prior
   sigma ~ dgamma(1,2)  #mean: a/b; sd= sqrt(a)/b
  }
 "
-writeLines(modelString, con="TEMPmodel.txt")
+#writeLines(modelString, con="TEMPmodel.txt")
 
 
 initList= function()  { #initial values generated via function: mu centered around 0; sigma in range 0-0.1
+  set.seed(123)
   initMu= rnorm(1,0,0.1)
   initSigma= runif(1,0,0.1)
   return( list( k1dt= initMu, sigma=initSigma))
 }
 
-jagsModel= jags.model( file= "TEMPmodel.txt", data=dataList, inits=initList,
+jagsModel= jags.model( file= textConnection(modelString), data=dataList, inits=initList,
                        n.chains=3, n.adapt=500)  #find MCMC sampler
-update( jagsModel,n.iter=500)  #burn in
+#update( jagsModel,n.iter=500)  #burn in
 
 codaSamples= coda.samples(jagsModel, variable.names=c('k1dt','sigma'),n.iter=3334)
 
@@ -114,9 +117,11 @@ plotPost(codaSamples[,'k1dt'],main='k1dt',xlab= 'k1 * delta_t')
   #true parameter should be k_WZ * Wp= 0.01
 
 diagMCMC(codaObject = codaSamples, parName = 'k1dt')
+dev.off()
 
 plotPost(codaSamples[,'sigma'],main='sigma',xlab= 'sigma')
 diagMCMC(codaObject = codaSamples, parName = 'sigma')
+dev.off()
 
 plot(type='n',x=0,y=0,xlim=c(1,dim(codaSamples[[1]])[1]),xlab='iteration',ylab='k1 * deltat' )
 cols= c('black','blue','green')
@@ -133,9 +138,10 @@ for (i in 1:length(codaSamples)){
 #   points(codaSamples[[i]][,1],codaSamples[[i]][,2])
 # }
 
+plot(x=as.numeric(codaSamples[[1]][,1]), y= as.numeric(codaSamples[[1]][,2]),type='l',
+     xlab='mu',ylab='sigma')
 
-
-
+plot(codaSamples)
 
 
 
