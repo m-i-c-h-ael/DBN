@@ -121,7 +121,7 @@ for (sr in 1:length(sigma_real_vec)) {
   for (r in 1:n_rounds) {
       #absolute noise
     set.seed(234)
-    Zp_wNoise= concs_out$Zp + rnorm(length(concs_out$Zp),mean=0,sd= sigma_real)
+    Zp_wNoise= concs_out$Zp + rnorm(length(concs_out$Zp),mean=0,sd= sigma_real) #absolute noise
     Zp_wNoise= ifelse(Zp_wNoise<0,0,Zp_wNoise)
     print(plot(concs_out$t,Zp_wNoise,main=paste('noise:',sigma_real)))
     
@@ -240,7 +240,7 @@ initList3= function()  { #initial values generated via function: mu centered aro
 real_relSD= 0.01
 Wp= concs_out$Wp
 Vp= concs_out$Vp
-Vp_wNoise= Vp+ sapply(concs_out$Vp, function(x){rnorm(n=1,mean=0,sd= x*real_relSD)})
+Vp_wNoise= Vp+ sapply(concs_out$Vp, function(x){rnorm(n=1,mean=0,sd= x*real_relSD)})  #absolute
 plot(concs_out$t,Vp_wNoise)
 
 dataList3= list(
@@ -292,6 +292,7 @@ abline(h=quantile(sim3$k1dt,.1),col='red',lwd=1,lty=2)
 abline(h=quantile(sim3$k1dt,.9),col='red',lwd=1,lty=2)
 
 
+
 ##############################
 #model (NO DEPHOSPHORYLATION; first order phosphorylation with saturation); sigma is relative
 
@@ -299,24 +300,32 @@ abline(h=quantile(sim3$k1dt,.9),col='red',lwd=1,lty=2)
 modelString4= "
  model {
   for (i in 2:length(y)) {
-    y[i] ~ dnorm(y_model[i], 1/sigma_rel[i]^2)  #likelihood   #instead of relative sigma, you could also normalize m by its distance from y_max
+    y[i] ~ dnorm(y_model[i], 1/SD_abs[i]^2)  #likelihood   #instead of relative sigma, you could also normalize m by its distance from y_max
     y_model[i]= y[i-1]- k1dt*w[i-1]*y[i-1]+ k1dt*w[i-1]*y_tot
-    #sigma_rel[i]= sigma/(y_tot-y[i-1])   ####################################
-    sigma_rel[i]= sigma/(max(10^-6,y_tot-y[i-1])) #y_tot may be estimated < y[i-1]
+    SD_abs[i]= SD_rel/(max(10^-6,y_tot-y[i-1])) #y_tot may be estimated < y[i-1]
   } 
   k1dt ~ dnorm(0, 1/0.05^2) #prior
-  sigma ~ dgamma(1,2)  #mean: a/b; sd= sqrt(a)/b
+  SD_rel ~ dgamma(1,2)  #mean: a/b; sd= sqrt(a)/b
   y_tot ~ dgamma(1,2)  #to be optimized; should be positive
  }
 "
 
-jagsModel4= jags.model( file= textConnection(modelString4), data=dataList3, inits=initList3,
+initList4= function()  { #initial values generated via function: mu centered around 0; sigma in range 0-0.1
+  set.seed(123)
+  initMu= rnorm(1,0,0.1)
+  initSigma= runif(1,0,0.1)
+  init_ytot= 1
+  return( list( k1dt= initMu, SD_rel=initSigma, y_tot= init_ytot))
+}
+
+jagsModel4= jags.model( file= textConnection(modelString4), data=dataList3, inits=initList4,
                         n.chains=2, n.adapt=500)  #find MCMC sampler
 
-codaSamples4= coda.samples(jagsModel4, variable.names=c('k1dt','sigma','y_tot'),n.iter=10000)
+codaSamples4= coda.samples(jagsModel4, variable.names=c('k1dt','SD_rel','y_tot'),n.iter=10000)
 plot(codaSamples4)
 
 diagMCMC(codaObject = codaSamples4, parName = 'k1dt')
+dev.off()
 diagMCMC(codaObject = codaSamples4, parName = 'y_tot')
 dev.off()
 
@@ -325,13 +334,15 @@ sim4= data.frame(codaSamples4[[1]])
 head(sim4)
 mu_sim= matrix(NA,nrow= dim(codaSamples4[[1]])[1],ncol=dim(concs_out)[1])
 mu_sim[,1]= rep(Y0[6],dim(mu_sim)[1]) #starting value
+deltaY_sim= matrix(NA,nrow= dim(codaSamples4[[1]])[1],ncol=dim(concs_out)[1])
 rel_deltaY_sim= matrix(NA,nrow= dim(codaSamples4[[1]])[1],ncol=dim(concs_out)[1])
-sigma_rel_sim= matrix(NA,nrow= dim(codaSamples4[[1]])[1],ncol=dim(concs_out)[1])
+SD_abs_sim= matrix(NA,nrow= dim(codaSamples4[[1]])[1],ncol=dim(concs_out)[1])
 for(tpidx in 2:dim(mu_sim)[2]) { #one TP after another
   mu_sim[,tpidx]= mu_sim[,tpidx-1]- sim4$k1dt*concs_out$Wp[tpidx-1]*mu_sim[,tpidx-1] + 
     sim4$k1dt*concs_out$Wp[tpidx-1]*sim4$y_tot
-  rel_deltaY_sim[,tpidx]= (mu_sim[,tpidx]-mu_sim[,tpidx-1])/ (sim4$y_tot-mu_sim[,tpidx])* 1/concs_out$Wp[tpidx-1]
-  sigma_rel_sim[,tpidx]= sim4$sigma/(sim4$y_tot-mu_sim[,tpidx])  # -concs_out$Vp[tpidx]
+  deltaY_sim[,tpidx]= (mu_sim[,tpidx]-mu_sim[,tpidx-1])
+  rel_deltaY_sim[,tpidx]= deltaY_sim[,tpidx]/ (sim4$y_tot-mu_sim[,tpidx])* 1/concs_out$Wp[tpidx-1]
+  SD_abs_sim[,tpidx]= sim4$SD_rel/(sim4$y_tot-mu_sim[,tpidx])  # -concs_out$Vp[tpidx]
 }
 par(mfrow=c(1,1))
 plot(concs_out$time,concs_out$Vp)
@@ -358,14 +369,21 @@ real_rel_dy= realSteps_Vp/real_ytot_y[2:length(real_ytot_y)] * 1/concs_out$Wp[2:
 
 plot(concs_out$time[2:length(concs_out$time)],real_rel_dy,main="Difference between steps",
      xlab='time',ylab='delta_y / (y_tot - y) * 1/Wp',ylim=c(-500,500))
-lines(concs_out$time[2:length(concs_out$time)],sigma_rel_sim[1,2:length(concs_out$time)],col='red')
 # abline(h=mean(sim4$k1dt),col='red',lwd=3)
 # abline(h=quantile(sim4$k1dt,.1),col='red',lwd=1,lty=2)
 # abline(h=quantile(sim4$k1dt,.9),col='red',lwd=1,lty=2)
 
+
+deltaY_plusSD_sim= deltaY_sim + SD_abs_sim
+deltaY_minusSD_sim= deltaY_sim - SD_abs_sim
 plot(concs_out$time[2:length(concs_out$time)],realSteps_Vp,main="Difference between steps",
      xlab='time',ylab='delta_y ')
-lines(concs_out$time[2:length(concs_out$time)],sigma_rel_sim[1,2:length(concs_out$time)],col='red')
+for(i in 9000:9100) {   #dim(deltaY_sim)[1]
+    lines(concs_out$time[2:length(concs_out$time)],deltaY_plusSD_sim[i,2:length(concs_out$time)],col='red')
+    lines(concs_out$time[2:length(concs_out$time)],deltaY_minusSD_sim[i,2:length(concs_out$time)],col='red')
+}
+#lines(concs_out$time[2:length(concs_out$time)],deltaY_sim[1,2:length(concs_out$time)],col='red')
+#lines(concs_out$time[2:length(concs_out$time)],SD_abs_sim[1,2:length(concs_out$time)],col='red')
 
 
 
