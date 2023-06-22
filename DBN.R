@@ -17,8 +17,14 @@ library('deSolve')
 library('animation')
 library('rjags')
 library('tidyverse')
+library('plotly')
 source('H:/My Drive/learning/20230220_BayesianStatistics/20230504_BayesianDogsBook/DBDA2Eprograms/DBDA2E-utilities.R')
-
+# `$.error` <- function(x, name) {   #not working
+#   if (!name %in% colnames(x)) {
+#     stop(paste("Column", name, "does not exist in the dataframe."))
+#   }
+#   x[[name]]
+# }
 
 # True:
  #A is phosphorylated by X, which is present in constant concentration
@@ -106,7 +112,7 @@ initList= function()  { #initial values generated via function: mu centered arou
 # Zp_wNoise= Zp+ sapply(concs_out$Zp, function(x){rnorm(n=1,mean=0,sd= x*real_relSD)})
 # plot(concs_out$t,Zp_wNoise)
 
-sigma_real_vec= c(0.01, 0.1,0.2,0.5,1)  
+sigma_real_vec= 0.01 # c(0.01, 0.1,0.2,0.5,1)  
 n_rounds= 1
 postMean_mtx= matrix(NA,nrow=n_rounds*length(sigma_real_vec),ncol=2)
 colnames(postMean_mtx)= c('sigma_real','postMean_k1dt')
@@ -132,7 +138,7 @@ for (sr in 1:length(sigma_real_vec)) {
                            n.chains=1, n.adapt=500)  #find MCMC sampler
     #update( jagsModel,n.iter=500)  #burn in
     
-    codaSamples= coda.samples(jagsModel, variable.names=c('k1dt','sigma'),n.iter=3334)
+    codaSamples= coda.samples(jagsModel, variable.names=c('k1dt','sigma'),n.iter=10000)
     
     # par(mfrow= c(1,1))
     # plotPost(codaSamples[,'k1dt'],main='k1dt',xlab= 'k1 * delta_t')
@@ -177,11 +183,21 @@ for (sr in 1:length(sigma_real_vec)) {
       mu_sim[,i]= mu_sim[,i-1]+ sim$k1dt
     }
     par(mfrow=c(1,1))
-    plot(concs_out$time,concs_out$Yp)
-    for(i in 1:100){   #
+    plot(x=concs_out$time,y=concs_out$Zp,main=paste('Real sigma:',sigma_real_vec[sr]))
+    for(i in 9000:9100){   #
       lines(concs_out$time,mu_sim[i,],col='red')
     }
-  }
+    
+    kde= kde2d(sim$k1dt,sim$sigma)
+    contour(kde,xlab= 'k1dt',ylab='sigma',xlim=c(0,max(sim$k1dt)),ylim=c(0,max(c(sim$k1dt,sim$sigma))))
+    
+    realSteps_Zp= diff(Zp_wNoise)
+    plot(concs_out$time[2:length(concs_out$time)],realSteps_Zp,main="Difference between steps",
+          xlab='time')
+    abline(h=mean(sim$k1dt),col='red',lwd=3)
+    abline(h=quantile(sim$k1dt,.1),col='red',lwd=1,lty=2)
+    abline(h=quantile(sim$k1dt,.9),col='red',lwd=1,lty=2)
+    }
 }
 
 postMean_stats= data.frame(postMean_mtx) %>%
@@ -233,10 +249,14 @@ dataList3= list(
 )
 
 jagsModel3= jags.model( file= textConnection(modelString3), data=dataList3, inits=initList3,
-                       n.chains=1, n.adapt=500)  #find MCMC sampler
+                       n.chains=2, n.adapt=500)  #find MCMC sampler
 
 codaSamples3= coda.samples(jagsModel3, variable.names=c('k1dt','sigma','y_tot'),n.iter=10000)
 plot(codaSamples3)
+
+diagMCMC(codaObject = codaSamples3, parName = 'k1dt')
+diagMCMC(codaObject = codaSamples3, parName = 'y_tot')
+ dev.off()
 
 #based on the simulated parameters, simulate traces
 sim3= data.frame(codaSamples3[[1]])
@@ -244,14 +264,110 @@ head(sim3)
 mu_sim= matrix(NA,nrow= dim(codaSamples3[[1]])[1],ncol=dim(concs_out)[1])
 mu_sim[,1]= rep(Y0[6],dim(mu_sim)[1]) #starting value
 for(i in 2:dim(mu_sim)[2]) { #one TP after another
-  mu_sim[,i]= mu_sim[,i-1]- sim3$k1dt*concs_out$Wp[i-1]*mu_sim[,i-1]+ 
+  mu_sim[,i]= mu_sim[,i-1]- sim3$k1dt*concs_out$Wp[i-1]*mu_sim[,i-1] + 
     sim3$k1dt*concs_out$Wp[i-1]*sim3$y_tot
 }
 par(mfrow=c(1,1))
 plot(concs_out$time,concs_out$Vp)
-for(i in 1:100){   #
+for(i in 9000:9100){   #
   lines(concs_out$time,mu_sim[i,],col='red')
 }
+
+
+kde3= kde2d(sim3$k1dt,sim3$y_tot)
+contour(kde3,xlab= 'k1dt',ylab='y_tot',xlim=c(min(c(0,sim3$k1dt)),max(sim3$k1dt)),
+        ylim=c(0,max(c(sim3$k1dt,sim3$y_tot))))
+
+summary(sim3)
+
+# k1dt= delta_y / (y_tot - y) * 1/w
+realSteps_Vp= diff(Vp_wNoise)  #delta_y
+real_ytot_y= 1-Vp_wNoise   #y_tot - y
+real_rel_dy= realSteps_Vp/real_ytot_y[2:length(real_ytot_y)] * 1/concs_out$Wp[2:length(real_ytot_y)]
+
+plot(concs_out$time[2:length(concs_out$time)],real_rel_dy,main="Difference between steps",
+     xlab='time',ylab='delta_y / (y_tot - y) * 1/Wp',ylim=c(-500,500))
+abline(h=mean(sim3$k1dt),col='red',lwd=3)
+abline(h=quantile(sim3$k1dt,.1),col='red',lwd=1,lty=2)
+abline(h=quantile(sim3$k1dt,.9),col='red',lwd=1,lty=2)
+
+
+##############################
+#model (NO DEPHOSPHORYLATION; first order phosphorylation with saturation); sigma is relative
+
+#specify model
+modelString4= "
+ model {
+  for (i in 2:length(y)) {
+    y[i] ~ dnorm(y_model[i], 1/sigma_rel[i]^2)  #likelihood   #instead of relative sigma, you could also normalize m by its distance from y_max
+    y_model[i]= y[i-1]- k1dt*w[i-1]*y[i-1]+ k1dt*w[i-1]*y_tot
+    #sigma_rel[i]= sigma/(y_tot-y[i-1])   ####################################
+    sigma_rel[i]= sigma/(max(10^-6,y_tot-y[i-1])) #y_tot may be estimated < y[i-1]
+  } 
+  k1dt ~ dnorm(0, 1/0.05^2) #prior
+  sigma ~ dgamma(1,2)  #mean: a/b; sd= sqrt(a)/b
+  y_tot ~ dgamma(1,2)  #to be optimized; should be positive
+ }
+"
+
+jagsModel4= jags.model( file= textConnection(modelString4), data=dataList3, inits=initList3,
+                        n.chains=2, n.adapt=500)  #find MCMC sampler
+
+codaSamples4= coda.samples(jagsModel4, variable.names=c('k1dt','sigma','y_tot'),n.iter=10000)
+plot(codaSamples4)
+
+diagMCMC(codaObject = codaSamples4, parName = 'k1dt')
+diagMCMC(codaObject = codaSamples4, parName = 'y_tot')
+dev.off()
+
+#based on the simulated parameters, simulate traces
+sim4= data.frame(codaSamples4[[1]])
+head(sim4)
+mu_sim= matrix(NA,nrow= dim(codaSamples4[[1]])[1],ncol=dim(concs_out)[1])
+mu_sim[,1]= rep(Y0[6],dim(mu_sim)[1]) #starting value
+rel_deltaY_sim= matrix(NA,nrow= dim(codaSamples4[[1]])[1],ncol=dim(concs_out)[1])
+sigma_rel_sim= matrix(NA,nrow= dim(codaSamples4[[1]])[1],ncol=dim(concs_out)[1])
+for(tpidx in 2:dim(mu_sim)[2]) { #one TP after another
+  mu_sim[,tpidx]= mu_sim[,tpidx-1]- sim4$k1dt*concs_out$Wp[tpidx-1]*mu_sim[,tpidx-1] + 
+    sim4$k1dt*concs_out$Wp[tpidx-1]*sim4$y_tot
+  rel_deltaY_sim[,tpidx]= (mu_sim[,tpidx]-mu_sim[,tpidx-1])/ (sim4$y_tot-mu_sim[,tpidx])* 1/concs_out$Wp[tpidx-1]
+  sigma_rel_sim[,tpidx]= sim4$sigma/(sim4$y_tot-mu_sim[,tpidx])  # -concs_out$Vp[tpidx]
+}
+par(mfrow=c(1,1))
+plot(concs_out$time,concs_out$Vp)
+for(i in 9000:9100){   #
+  lines(concs_out$time,mu_sim[i,],col='red')
+}
+
+#DFs:
+ #concs_out: input data  (rows=TPs; variables in columns)
+ #sim4: parameter chains (rows= chain steps; parameters in columns)
+ #mu_sim: simulated PLAUSIBLE VALUE of variables over time(rows: chain steps; columns: TPs)  (variation from sigma is not incorporated)
+
+
+kde4= kde2d(sim4$k1dt,sim4$y_tot)
+contour(kde4,xlab= 'k1dt',ylab='y_tot',xlim=c(min(c(0,sim4$k1dt)),max(sim4$k1dt)),
+        ylim=c(0,max(c(sim4$k1dt,sim4$y_tot))))
+
+summary(sim4)
+
+# k1dt= delta_y / (y_tot - y) * 1/w
+realSteps_Vp= diff(Vp_wNoise)  #delta_y
+real_ytot_y= 1-Vp_wNoise   #y_tot - y
+real_rel_dy= realSteps_Vp/real_ytot_y[2:length(real_ytot_y)] * 1/concs_out$Wp[2:length(real_ytot_y)]
+
+plot(concs_out$time[2:length(concs_out$time)],real_rel_dy,main="Difference between steps",
+     xlab='time',ylab='delta_y / (y_tot - y) * 1/Wp',ylim=c(-500,500))
+lines(concs_out$time[2:length(concs_out$time)],sigma_rel_sim[1,2:length(concs_out$time)],col='red')
+# abline(h=mean(sim4$k1dt),col='red',lwd=3)
+# abline(h=quantile(sim4$k1dt,.1),col='red',lwd=1,lty=2)
+# abline(h=quantile(sim4$k1dt,.9),col='red',lwd=1,lty=2)
+
+plot(concs_out$time[2:length(concs_out$time)],realSteps_Vp,main="Difference between steps",
+     xlab='time',ylab='delta_y ')
+lines(concs_out$time[2:length(concs_out$time)],sigma_rel_sim[1,2:length(concs_out$time)],col='red')
+
+
 
 
 
