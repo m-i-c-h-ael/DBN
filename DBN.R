@@ -3,6 +3,7 @@ cat("\014")  #is the code to send ctrl+L to the console and therefore will clear
 plot.new()
 
 # to add
+#do you arrive at the same result if you only take at subset of TPs -> is prior overwhelmed
 #allow diff. timesteps
 #dephosphorylation
 #estimation of SD
@@ -18,6 +19,7 @@ library('animation')
 library('rjags')
 library('tidyverse')
 library('plotly')
+library('MASS')
 source('H:/My Drive/learning/20230220_BayesianStatistics/20230504_BayesianDogsBook/DBDA2Eprograms/DBDA2E-utilities.R')
 # `$.error` <- function(x, name) {   #not working
 #   if (!name %in% colnames(x)) {
@@ -222,7 +224,7 @@ modelString3= "
     y[i] ~ dnorm(m[i], 1/sigma^2)  #likelihood
     m[i]= y[i-1]- k1dt*w[i-1]*y[i-1]+ k1dt*w[i-1]*y_tot
   } 
-  k1dt ~ dnorm(0, 1/0.05^2) #prior
+  k1dt ~ dnorm(0, 1/1^2) #prior
   sigma ~ dgamma(1,2)  #mean: a/b; sd= sqrt(a)/b
   y_tot ~ dgamma(1,2)  #to be optimized; should be positive
  }
@@ -237,11 +239,19 @@ initList3= function()  { #initial values generated via function: mu centered aro
 }
 
 #relative noise
-real_relSD= 0.01
+real_relSD= 0.001
 Wp= concs_out$Wp
 Vp= concs_out$Vp
-Vp_wNoise= Vp+ sapply(concs_out$Vp, function(x){rnorm(n=1,mean=0,sd= x*real_relSD)})  #absolute
+Vp_wNoise= Vp+ sapply(concs_out$Vp, function(x){rnorm(n=1,mean=0,sd= x*real_relSD)})  #relative
 plot(concs_out$t,Vp_wNoise)
+
+#simulate as difference equation, rather than differential equation
+V_fromDiff= rep(NA,1001)
+V_fromDiff= Y0[6]
+for(tidx in 2:1001) {
+  V_fromDiff[tidx]= V_fromDiff[tidx-1]+ Y0[4]* parmsX[7,1] * (1-V_fromDiff[tidx-1]) #Wp is constant; delta_t=1
+}
+lines(concs_out$t,V_fromDiff,col='green')
 
 dataList3= list(
   y= Vp_wNoise,
@@ -255,6 +265,7 @@ codaSamples3= coda.samples(jagsModel3, variable.names=c('k1dt','sigma','y_tot'),
 plot(codaSamples3)
 
 diagMCMC(codaObject = codaSamples3, parName = 'k1dt')
+dev.off()
 diagMCMC(codaObject = codaSamples3, parName = 'y_tot')
  dev.off()
 
@@ -274,7 +285,7 @@ for(i in 9000:9100){   #
 }
 
 
-kde3= kde2d(sim3$k1dt,sim3$y_tot)
+kde3= MASS::kde2d(sim3$k1dt,sim3$y_tot)
 contour(kde3,xlab= 'k1dt',ylab='y_tot',xlim=c(min(c(0,sim3$k1dt)),max(sim3$k1dt)),
         ylim=c(0,max(c(sim3$k1dt,sim3$y_tot))))
 
@@ -302,9 +313,9 @@ modelString4= "
   for (i in 2:length(y)) {
     y[i] ~ dnorm(y_model[i], 1/SD_abs[i]^2)  #likelihood   #instead of relative sigma, you could also normalize m by its distance from y_max
     y_model[i]= y[i-1]- k1dt*w[i-1]*y[i-1]+ k1dt*w[i-1]*y_tot
-    SD_abs[i]= SD_rel/(max(10^-6,y_tot-y[i-1])) #y_tot may be estimated < y[i-1]
+    SD_abs[i]= SD_rel * y[i-1]
   } 
-  k1dt ~ dnorm(0, 1/0.05^2) #prior
+  k1dt ~ dnorm(0, 1/1^2) #prior
   SD_rel ~ dgamma(1,2)  #mean: a/b; sd= sqrt(a)/b
   y_tot ~ dgamma(1,2)  #to be optimized; should be positive
  }
@@ -342,7 +353,7 @@ for(tpidx in 2:dim(mu_sim)[2]) { #one TP after another
     sim4$k1dt*concs_out$Wp[tpidx-1]*sim4$y_tot
   deltaY_sim[,tpidx]= (mu_sim[,tpidx]-mu_sim[,tpidx-1])
   rel_deltaY_sim[,tpidx]= deltaY_sim[,tpidx]/ (sim4$y_tot-mu_sim[,tpidx])* 1/concs_out$Wp[tpidx-1]
-  SD_abs_sim[,tpidx]= sim4$SD_rel/(sim4$y_tot-mu_sim[,tpidx])  # -concs_out$Vp[tpidx]
+  SD_abs_sim[,tpidx]= sim4$SD_rel * mu_sim[,tpidx]  # -concs_out$Vp[tpidx]
 }
 par(mfrow=c(1,1))
 plot(concs_out$time,concs_out$Vp)
@@ -382,6 +393,7 @@ for(i in 9000:9100) {   #dim(deltaY_sim)[1]
     lines(concs_out$time[2:length(concs_out$time)],deltaY_plusSD_sim[i,2:length(concs_out$time)],col='red')
     lines(concs_out$time[2:length(concs_out$time)],deltaY_minusSD_sim[i,2:length(concs_out$time)],col='red')
 }
+legend('topright',legend=c( paste('Rel. SD:',real_relSD),'b'))
 #lines(concs_out$time[2:length(concs_out$time)],deltaY_sim[1,2:length(concs_out$time)],col='red')
 #lines(concs_out$time[2:length(concs_out$time)],SD_abs_sim[1,2:length(concs_out$time)],col='red')
 
